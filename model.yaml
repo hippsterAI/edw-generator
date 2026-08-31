@@ -1,0 +1,730 @@
+# ============================================================================
+# EDW GENERATOR MODEL
+#
+# This file is the product. Every table, view, procedure and catalog row in
+# out/ is derived from it. To add an entity, add it here and re-run
+# generate.py. Never edit generate.py to add an entity.
+#
+# Each entity declares only its BUSINESS attributes. The conformance columns
+# (<Entity>Key, <Entity>SourceSystemName, <Entity>SourceSystemKey,
+# <Entity>SCDType1HashValue, <Entity>SCDType2HashValue,
+# <Entity>ActiveRecordFlag, <Entity>StartEffectiveDate,
+# <Entity>EndEffectiveDate, <Entity>LastUpdatedDateTime) are implied and
+# generated for every dimension. Declaring one explicitly is a validation
+# error.
+#
+# Attribute options
+#   name        PascalCase, follows the naming rules (validate.py enforces)
+#   type        T-SQL type. QUOTE types containing commas: "decimal(5,2)".
+#   scd         1 = overwrite in place   2 = new row, close the old one
+#   expression  optional; T-SQL computed from other attributes, written with
+#               {AttributeName} placeholders. Not present in staging. May be
+#               any T-SQL expression, including a scalar subquery against a
+#               helper table (see Age).
+#   mapping     optional; name of a helper.CodeMapping group. The staging
+#               value is the SOURCE code; the dimension stores the STANDARD
+#               code (falls back to the source code when unmapped).
+#   mapping_name_of  optional; this attribute is the StandardName of the
+#               named mapped Code attribute. Not present in staging.
+#
+# Dimension options
+#   source_key  the staging column(s) that identify a row in the source.
+#               Concatenated with '|' to form <Entity>SourceSystemKey.
+#   staging     {source_system, source_object, table}. `table` defaults to
+#               the entity name (stg.<Entity>); override it when a dim and a
+#               fact share a name.
+#
+# Fact options
+#   grain           documentation only
+#   large           true => also generate etl.Fact_<X>_PartialRefresh
+#   partial_refresh_role   role whose key scopes a partial refresh (large only)
+#   source_key      staging columns forming <Fact>SourceSystemKey
+#   source_columns  extra staging columns that exist only to form the key
+#   dimension_keys  role -> dimension. FK column is <Role>Key, so a role may
+#                   never equal the fact's own name. `source` lists
+#                   the staging column(s) holding the dimension's source key,
+#                   aligned positionally with that dimension's source_key.
+#                   Types are inherited from the dimension.
+#   measures        additive numeric columns
+#   index_keys      the two highest-cardinality FK roles, for the NC index
+#
+# No PII: no birth date, ethnicity, gender, address, phone, email. Ages
+# arrive from the source as integers computed at the event.
+# ============================================================================
+
+version: 1
+
+settings:
+  hash_algorithm: SHA2_512        # -> varbinary(64)
+  end_of_time: '9999-12-31'
+  unknown_member_key: -1
+  source_system_default: SIS
+
+naming:
+  # Acronyms permitted as PascalCase tokens. Everything else must be a word.
+  allowed_acronyms: [GPA, SCD]
+
+# ============================================================================
+dims:
+# ============================================================================
+
+  # ---------------------------------------------------------------- time ----
+  Calendar:
+    description: One row per calendar day. Role-played by every date FK.
+    source_key: [CalendarDate]
+    staging: {source_system: Generated, source_object: Calendar}
+    attributes:
+      - {name: CalendarDate,        type: date,        scd: 1}
+      - {name: CalendarYear,        type: smallint,    scd: 1}
+      - {name: CalendarQuarter,     type: tinyint,     scd: 1}
+      - {name: CalendarMonth,       type: tinyint,     scd: 1}
+      - {name: CalendarMonthName,   type: varchar(20), scd: 1}
+      - {name: CalendarDayOfMonth,  type: tinyint,     scd: 1}
+      - {name: CalendarDayOfWeek,   type: tinyint,     scd: 1}
+      - {name: CalendarDayName,     type: varchar(20), scd: 1}
+      - {name: WeekdayFlag,         type: char(1),     scd: 1}
+      - {name: FiscalYear,          type: smallint,    scd: 1}
+      - {name: AcademicYear,        type: smallint,    scd: 1}
+
+  Time:
+    description: One row per minute of the day. Role-played by every time-of-day FK.
+    source_key: [TimeValue]
+    staging: {source_system: Generated, source_object: Time}
+    attributes:
+      - {name: TimeValue,           type: time(0),     scd: 1}
+      - {name: TimeName,            type: varchar(10), scd: 1}     # 08:30 AM
+      - {name: HourOfDay,           type: tinyint,     scd: 1}
+      - {name: MinuteOfHour,        type: tinyint,     scd: 1}
+      - {name: TimePeriodCode,      type: varchar(10), scd: 1}     # MORN | AFT | EVE
+      - {name: TimePeriodName,      type: varchar(20), scd: 1}
+
+  Term:
+    description: One row per academic term.
+    source_key: [TermCode]
+    staging: {source_system: SIS, source_object: Term}
+    attributes:
+      - {name: TermCode,            type: varchar(20),  scd: 1}
+      - {name: TermName,            type: varchar(100), scd: 1}
+      - {name: TermCodeAndName,     type: varchar(130), scd: 1,
+         expression: "CONCAT({TermCode}, ' - ', {TermName})"}
+      - {name: AcademicYear,        type: smallint,     scd: 1}
+      - {name: TermTypeCode,        type: varchar(10),  scd: 1}
+      - {name: TermTypeName,        type: varchar(50),  scd: 1}
+      - {name: TermStartDate,       type: date,         scd: 1}
+      - {name: TermEndDate,         type: date,         scd: 1}
+      - {name: CensusDate,          type: date,         scd: 1}
+      - {name: CurrentTermFlag,     type: char(1),      scd: 1}
+
+  PartOfTerm:
+    description: One row per sub-session of a term (full term, first eight weeks, ...).
+    source_key: [TermCode, PartOfTermCode]
+    staging: {source_system: SIS, source_object: PartOfTerm}
+    attributes:
+      - {name: PartOfTermCode,        type: varchar(10),  scd: 1}
+      - {name: PartOfTermName,        type: varchar(100), scd: 1}
+      - {name: PartOfTermCodeAndName, type: varchar(130), scd: 1,
+         expression: "CONCAT({PartOfTermCode}, ' - ', {PartOfTermName})"}
+      - {name: TermCode,              type: varchar(20),  scd: 1}
+      - {name: PartOfTermStartDate,   type: date,         scd: 1}
+      - {name: PartOfTermEndDate,     type: date,         scd: 1}
+      - {name: CensusDate,            type: date,         scd: 1}
+      - {name: WeekCount,             type: tinyint,      scd: 1}
+
+  # -------------------------------------------------------------- people ----
+  Student:
+    description: One row per student per attribute version (SCD2 on status attributes).
+    source_key: [StudentCode]
+    staging: {source_system: SIS, source_object: Student}
+    attributes:
+      - {name: StudentCode,         type: varchar(20),  scd: 1}
+      - {name: StudentName,         type: varchar(100), scd: 1}
+      - {name: StudentTypeCode,     type: varchar(10),  scd: 2}
+      - {name: StudentTypeName,     type: varchar(50),  scd: 2}
+      - {name: ResidencyCode,       type: varchar(50),  scd: 2, mapping: Residency}
+      - {name: ResidencyName,       type: varchar(100), scd: 2, mapping_name_of: ResidencyCode}
+      - {name: DegreeSeekingFlag,   type: char(1),      scd: 2}
+      - {name: FirstTermCode,       type: varchar(20),  scd: 1}
+
+  Applicant:
+    description: One row per applicant (a person in the admissions funnel; may or may not become a student).
+    source_key: [ApplicantCode]
+    staging: {source_system: SIS, source_object: Applicant}
+    attributes:
+      - {name: ApplicantCode,           type: varchar(20),  scd: 1}
+      - {name: ApplicantName,           type: varchar(100), scd: 1}
+      - {name: ApplicantTypeCode,       type: varchar(10),  scd: 2}
+      - {name: ApplicantTypeName,       type: varchar(50),  scd: 2}
+      - {name: ResidencyCode,           type: varchar(50),  scd: 2, mapping: Residency}
+      - {name: ResidencyName,           type: varchar(100), scd: 2, mapping_name_of: ResidencyCode}
+      - {name: ApplicationTermCode,     type: varchar(20),  scd: 1}
+      - {name: IntendedProgramCode,     type: varchar(20),  scd: 2}
+      - {name: ConvertedToStudentFlag,  type: char(1),      scd: 2}
+      - {name: StudentCode,             type: varchar(20),  scd: 1}
+
+  Faculty:
+    description: One row per instructor or advisor.
+    source_key: [FacultyCode]
+    staging: {source_system: SIS, source_object: Faculty}
+    attributes:
+      - {name: FacultyCode,           type: varchar(20),  scd: 1}
+      - {name: FacultyName,           type: varchar(100), scd: 1}
+      - {name: FacultyCodeAndName,    type: varchar(130), scd: 1,
+         expression: "CONCAT({FacultyCode}, ' - ', {FacultyName})"}
+      - {name: EmploymentTypeCode,    type: varchar(50),  scd: 2, mapping: EmploymentType}
+      - {name: EmploymentTypeName,    type: varchar(100), scd: 2, mapping_name_of: EmploymentTypeCode}
+      - {name: DepartmentName,        type: varchar(100), scd: 2}
+      - {name: FacultyRankCode,       type: varchar(10),  scd: 2}
+      - {name: FacultyRankName,       type: varchar(50),  scd: 2}
+      - {name: ActiveFacultyFlag,     type: char(1),      scd: 2}
+
+  # ------------------------------------------------------------ academic ----
+  Program:
+    description: One row per program of study (degree or certificate).
+    source_key: [ProgramCode]
+    staging: {source_system: SIS, source_object: Program}
+    attributes:
+      - {name: ProgramCode,                 type: varchar(20),  scd: 1}
+      - {name: ProgramName,                 type: varchar(100), scd: 1}
+      - {name: ProgramCodeAndName,          type: varchar(130), scd: 1,
+         expression: "CONCAT({ProgramCode}, ' - ', {ProgramName})"}
+      - {name: AwardTypeCode,               type: varchar(10),  scd: 2}
+      - {name: AwardTypeName,               type: varchar(50),  scd: 2}
+      - {name: InstructionalProgramCode,    type: varchar(10),  scd: 2}
+      - {name: DivisionName,                type: varchar(100), scd: 2}
+      - {name: ActiveProgramFlag,           type: char(1),      scd: 2}
+
+  Course:
+    description: One row per catalog course.
+    source_key: [CourseCode]
+    staging: {source_system: SIS, source_object: Course}
+    attributes:
+      - {name: CourseCode,          type: varchar(20),   scd: 1}
+      - {name: CourseName,          type: varchar(100),  scd: 1}
+      - {name: CourseCodeAndName,   type: varchar(130),  scd: 1,
+         expression: "CONCAT({CourseCode}, ' - ', {CourseName})"}
+      - {name: SubjectCode,         type: varchar(10),   scd: 1}
+      - {name: SubjectName,         type: varchar(100),  scd: 1}
+      - {name: CourseNumber,        type: varchar(10),   scd: 1}
+      - {name: CreditHours,         type: "decimal(5,2)", scd: 2}
+      - {name: CourseLevelCode,     type: varchar(10),   scd: 2}
+      - {name: CourseLevelName,     type: varchar(50),   scd: 2}
+      - {name: ActiveCourseFlag,    type: char(1),       scd: 2}
+
+  Class:
+    description: One row per scheduled section of a course in a term.
+    source_key: [TermCode, ClassCode]
+    staging: {source_system: SIS, source_object: Class}
+    attributes:
+      - {name: ClassCode,               type: varchar(20),  scd: 1}
+      - {name: ClassName,               type: varchar(100), scd: 1}
+      - {name: TermCode,                type: varchar(20),  scd: 1}
+      - {name: PartOfTermCode,          type: varchar(10),  scd: 1}
+      - {name: CourseCode,              type: varchar(20),  scd: 1}
+      - {name: SectionNumber,           type: varchar(10),  scd: 1}
+      - {name: DeliveryTypeCode,        type: varchar(50),  scd: 2, mapping: DeliveryType}
+      - {name: DeliveryTypeName,        type: varchar(100), scd: 2, mapping_name_of: DeliveryTypeCode}
+      - {name: PrimaryFacultyCode,      type: varchar(20),  scd: 2}
+      - {name: LocationCode,            type: varchar(20),  scd: 2}
+      - {name: MaximumEnrollmentCount,  type: int,          scd: 2}
+      - {name: ClassStartDate,          type: date,         scd: 2}
+      - {name: ClassEndDate,            type: date,         scd: 2}
+
+  Location:
+    description: One row per physical or virtual place where instruction happens.
+    source_key: [LocationCode]
+    staging: {source_system: SIS, source_object: Location}
+    attributes:
+      - {name: LocationCode,         type: varchar(20),  scd: 1}
+      - {name: LocationName,         type: varchar(100), scd: 1}
+      - {name: LocationCodeAndName,  type: varchar(130), scd: 1,
+         expression: "CONCAT({LocationCode}, ' - ', {LocationName})"}
+      - {name: CampusCode,           type: varchar(10),  scd: 2}
+      - {name: CampusName,           type: varchar(100), scd: 2}
+      - {name: BuildingName,         type: varchar(100), scd: 2}
+      - {name: RoomNumber,           type: varchar(10),  scd: 2}
+      - {name: LocationTypeCode,     type: varchar(10),  scd: 2}
+      - {name: LocationTypeName,     type: varchar(50),  scd: 2}
+
+  DeliveryType:
+    description: One row per instructional delivery modality (standardised via helper.CodeMapping).
+    source_key: [DeliveryTypeCode]
+    staging: {source_system: SIS, source_object: DeliveryType}
+    attributes:
+      - {name: DeliveryTypeCode,       type: varchar(50),  scd: 1, mapping: DeliveryType}
+      - {name: DeliveryTypeName,       type: varchar(100), scd: 1, mapping_name_of: DeliveryTypeCode}
+      - {name: DistanceEducationFlag,  type: char(1),      scd: 2}
+
+  # ----------------------------------------------------------- outcomes ----
+  Grade:
+    description: One row per grade symbol.
+    source_key: [GradeCode]
+    staging: {source_system: SIS, source_object: Grade}
+    attributes:
+      - {name: GradeCode,           type: varchar(10),   scd: 1}
+      - {name: GradeName,           type: varchar(50),   scd: 1}
+      - {name: GradePointValue,     type: "decimal(4,2)", scd: 2}
+      - {name: GradeTypeCode,       type: varchar(10),   scd: 2}   # STD | WDR | INC | PF
+      - {name: GradeTypeName,       type: varchar(50),   scd: 2}
+      - {name: CountsInGPAFlag,     type: char(1),       scd: 2}
+      - {name: EarnsCreditFlag,     type: char(1),       scd: 2}
+      - {name: WithdrawalFlag,      type: char(1),       scd: 2}
+
+  GPA:
+    description: One row per GPA value at 0.01 resolution (0.00 - 4.00), banded. Facts join on the rounded value.
+    source_key: [GPAValue]
+    staging: {source_system: Generated, source_object: GPA}
+    attributes:
+      - {name: GPAValue,            type: "decimal(4,2)", scd: 1}
+      - {name: GPABandCode,         type: varchar(10),   scd: 1,
+         expression: "CASE WHEN {GPAValue} >= 3.50 THEN 'HON' WHEN {GPAValue} >= 3.00 THEN 'HIGH' WHEN {GPAValue} >= 2.00 THEN 'GOOD' WHEN {GPAValue} >= 1.00 THEN 'LOW' ELSE 'FAIL' END"}
+      - {name: GPABandName,         type: varchar(50),   scd: 1,
+         expression: "CASE WHEN {GPAValue} >= 3.50 THEN 'Honors (3.50 - 4.00)' WHEN {GPAValue} >= 3.00 THEN 'High (3.00 - 3.49)' WHEN {GPAValue} >= 2.00 THEN 'Good (2.00 - 2.99)' WHEN {GPAValue} >= 1.00 THEN 'Low (1.00 - 1.99)' ELSE 'Failing (0.00 - 0.99)' END"}
+      - {name: GoodStandingFlag,    type: char(1),       scd: 1,
+         expression: "CASE WHEN {GPAValue} >= 2.00 THEN 'Y' ELSE 'N' END"}
+
+  Age:
+    description: One row per whole year of age, banded by the tenant's helper.AgeBandDefinition.
+    source_key: [AgeValue]
+    staging: {source_system: Generated, source_object: Age}
+    attributes:
+      - {name: AgeValue,            type: smallint,     scd: 1}
+      - {name: AgeBandCode,         type: varchar(10),  scd: 1,
+         expression: "(SELECT TOP 1 b.AgeBandCode FROM helper.AgeBandDefinition AS b WHERE {AgeValue} BETWEEN b.MinimumAge AND b.MaximumAge ORDER BY b.SortOrder)"}
+      - {name: AgeBandName,         type: varchar(50),  scd: 1,
+         expression: "(SELECT TOP 1 b.AgeBandName FROM helper.AgeBandDefinition AS b WHERE {AgeValue} BETWEEN b.MinimumAge AND b.MaximumAge ORDER BY b.SortOrder)"}
+      - {name: AdultLearnerFlag,    type: char(1),      scd: 1,
+         expression: "CASE WHEN {AgeValue} >= 25 THEN 'Y' ELSE 'N' END"}
+
+  AcademicStanding:
+    description: One row per academic standing status (good standing, warning, probation, suspension).
+    source_key: [AcademicStandingCode]
+    staging: {source_system: SIS, source_object: AcademicStanding}
+    attributes:
+      - {name: AcademicStandingCode,        type: varchar(10),  scd: 1}
+      - {name: AcademicStandingName,        type: varchar(50),  scd: 1}
+      - {name: AcademicStandingCodeAndName, type: varchar(70),  scd: 1,
+         expression: "CONCAT({AcademicStandingCode}, ' - ', {AcademicStandingName})"}
+      - {name: GoodStandingFlag,            type: char(1),      scd: 2}
+      - {name: SortOrder,                   type: tinyint,      scd: 2}
+
+  # ------------------------------------------------------------- status ----
+  StudentStatus:
+    description: One row per student lifecycle status.
+    source_key: [StudentStatusCode]
+    staging: {source_system: SIS, source_object: StudentStatus}
+    attributes:
+      - {name: StudentStatusCode,         type: varchar(10),  scd: 1}
+      - {name: StudentStatusName,         type: varchar(50),  scd: 1}
+      - {name: StudentStatusCodeAndName,  type: varchar(70),  scd: 1,
+         expression: "CONCAT({StudentStatusCode}, ' - ', {StudentStatusName})"}
+      - {name: EnrolledFlag,              type: char(1),      scd: 2}
+      - {name: SortOrder,                 type: tinyint,      scd: 2}
+
+  RegistrationStatus:
+    description: One row per registration transaction status.
+    source_key: [RegistrationStatusCode]
+    staging: {source_system: SIS, source_object: RegistrationStatus}
+    attributes:
+      - {name: RegistrationStatusCode,        type: varchar(10),  scd: 1}
+      - {name: RegistrationStatusName,        type: varchar(50),  scd: 1}
+      - {name: RegistrationStatusCodeAndName, type: varchar(70),  scd: 1,
+         expression: "CONCAT({RegistrationStatusCode}, ' - ', {RegistrationStatusName})"}
+      - {name: CountsAsRegisteredFlag,        type: char(1),      scd: 2}
+      - {name: DropFlag,                      type: char(1),      scd: 2}
+
+  ApplicationState:
+    description: One row per admissions funnel stage.
+    source_key: [ApplicationStateCode]
+    staging: {source_system: SIS, source_object: ApplicationState}
+    attributes:
+      - {name: ApplicationStateCode,        type: varchar(10),  scd: 1}
+      - {name: ApplicationStateName,        type: varchar(50),  scd: 1}
+      - {name: ApplicationStateCodeAndName, type: varchar(70),  scd: 1,
+         expression: "CONCAT({ApplicationStateCode}, ' - ', {ApplicationStateName})"}
+      - {name: CompletedApplicationFlag,    type: char(1),      scd: 2}
+      - {name: AdmittedFlag,                type: char(1),      scd: 2}
+      - {name: SortOrder,                   type: tinyint,      scd: 2}
+
+  # ------------------------------------------------------------ services ----
+  Advisement:
+    description: One row per advising service type.
+    source_key: [AdvisementCode]
+    staging: {source_system: SIS, source_object: Advisement}
+    attributes:
+      - {name: AdvisementCode,        type: varchar(10),  scd: 1}
+      - {name: AdvisementName,        type: varchar(100), scd: 1}
+      - {name: AdvisementCodeAndName, type: varchar(130), scd: 1,
+         expression: "CONCAT({AdvisementCode}, ' - ', {AdvisementName})"}
+      - {name: AdvisementTypeCode,    type: varchar(10),  scd: 2}
+      - {name: AdvisementTypeName,    type: varchar(50),  scd: 2}
+      - {name: RequiredFlag,          type: char(1),      scd: 2}
+
+  CustomCohort:
+    description: One row per institution-defined cohort (a named group of students tracked together).
+    source_key: [CustomCohortCode]
+    staging: {source_system: SIS, source_object: CustomCohort}
+    attributes:
+      - {name: CustomCohortCode,        type: varchar(20),  scd: 1}
+      - {name: CustomCohortName,        type: varchar(100), scd: 1}
+      - {name: CustomCohortCodeAndName, type: varchar(130), scd: 1,
+         expression: "CONCAT({CustomCohortCode}, ' - ', {CustomCohortName})"}
+      - {name: CohortTypeCode,          type: varchar(10),  scd: 2}
+      - {name: CohortTypeName,          type: varchar(50),  scd: 2}
+      - {name: StartTermCode,           type: varchar(20),  scd: 1}
+      - {name: ActiveCohortFlag,        type: char(1),      scd: 2}
+
+  FinancialAidSource:
+    description: One row per aid fund or program.
+    source_key: [FinancialAidSourceCode]
+    staging: {source_system: FinancialAid, source_object: FundCatalog}
+    attributes:
+      - {name: FinancialAidSourceCode,        type: varchar(20),  scd: 1}
+      - {name: FinancialAidSourceName,        type: varchar(100), scd: 1}
+      - {name: FinancialAidSourceCodeAndName, type: varchar(130), scd: 1,
+         expression: "CONCAT({FinancialAidSourceCode}, ' - ', {FinancialAidSourceName})"}
+      - {name: AidTypeCode,                   type: varchar(10),  scd: 2}   # GRANT | LOAN | SCHOL | WORK
+      - {name: AidTypeName,                   type: varchar(50),  scd: 2}
+      - {name: FundingSourceCode,             type: varchar(10),  scd: 2}   # FED | STATE | INST | PRIV
+      - {name: FundingSourceName,             type: varchar(50),  scd: 2}
+      - {name: NeedBasedFlag,                 type: char(1),      scd: 2}
+
+  # -------------------------------------------- multi-source descriptors ----
+  AdvisorContact:
+    description: One row per CRM contact descriptor (contact type x outcome x topic).
+    source_key: [AdvisorContactCode]
+    staging: {source_system: CRM, source_object: ContactDescriptor}
+    attributes:
+      - {name: AdvisorContactCode,        type: varchar(30),  scd: 1}
+      - {name: AdvisorContactName,        type: varchar(100), scd: 1}
+      - {name: ContactCodeAndName,        type: varchar(130), scd: 1,
+         expression: "CONCAT({AdvisorContactCode}, ' - ', {AdvisorContactName})"}
+      - {name: ContactTypeCode,           type: varchar(10),  scd: 2}   # APPT | CALL | EMAIL | WALK
+      - {name: ContactTypeName,           type: varchar(50),  scd: 2}
+      - {name: ContactOutcomeCode,        type: varchar(10),  scd: 2}   # KEPT | NOSHOW | CANC
+      - {name: ContactOutcomeName,        type: varchar(50),  scd: 2}
+      - {name: ContactTopicCode,          type: varchar(10),  scd: 2}   # ACAD | FIN | CAREER | PERS
+      - {name: ContactTopicName,          type: varchar(50),  scd: 2}
+      - {name: ContactKeptFlag,           type: char(1),      scd: 2}
+
+  LearningActivity:
+    description: One row per LMS activity descriptor (activity type x platform).
+    source_key: [LearningActivityCode]
+    staging: {source_system: LMS, source_object: ActivityDescriptor}
+    attributes:
+      - {name: LearningActivityCode,      type: varchar(30),  scd: 1}
+      - {name: LearningActivityName,      type: varchar(100), scd: 1}
+      - {name: ActivityCodeAndName,       type: varchar(130), scd: 1,
+         expression: "CONCAT({LearningActivityCode}, ' - ', {LearningActivityName})"}
+      - {name: ActivityTypeCode,          type: varchar(10),  scd: 2}   # LOGIN | SUBMIT | DISC | QUIZ
+      - {name: ActivityTypeName,          type: varchar(50),  scd: 2}
+      - {name: ActivityPlatformCode,      type: varchar(10),  scd: 2}   # WEB | MOB
+      - {name: ActivityPlatformName,      type: varchar(50),  scd: 2}
+
+  SupportCase:
+    description: One row per ITSM case descriptor (category x priority x resolution status).
+    source_key: [SupportCaseCode]
+    staging: {source_system: ITSM, source_object: CaseDescriptor}
+    attributes:
+      - {name: SupportCaseCode,                 type: varchar(30),  scd: 1}
+      - {name: SupportCaseName,                 type: varchar(100), scd: 1}
+      - {name: SupportCaseCodeAndName,          type: varchar(130), scd: 1,
+         expression: "CONCAT({SupportCaseCode}, ' - ', {SupportCaseName})"}
+      - {name: SupportCaseCategoryCode,         type: varchar(10),  scd: 2}   # FIN | TECH | PERS | ACAD
+      - {name: SupportCaseCategoryName,         type: varchar(50),  scd: 2}
+      - {name: SupportCasePriorityCode,         type: varchar(10),  scd: 2}   # LOW | MED | HIGH
+      - {name: SupportCasePriorityName,         type: varchar(50),  scd: 2}
+      - {name: SupportCaseResolutionStatusCode, type: varchar(10),  scd: 2}   # OPEN | RES | CLSD
+      - {name: SupportCaseResolutionStatusName, type: varchar(50),  scd: 2}
+      - {name: SupportCaseOpenFlag,             type: char(1),      scd: 2}
+
+# ============================================================================
+facts:
+# ============================================================================
+
+  StudentClass:
+    description: One row per student per class registration (the enrollment grain).
+    grain: student x class
+    large: true
+    partial_refresh_role: Term
+    source_key: [StudentCode, TermCode, ClassCode]
+    staging: {source_system: SIS, source_object: StudentClass}
+    dimension_keys:
+      - {role: Student,          dim: Student,      source: [StudentCode]}
+      - {role: Class,            dim: Class,        source: [TermCode, ClassCode]}
+      - {role: Course,           dim: Course,       source: [CourseCode]}
+      - {role: Term,             dim: Term,         source: [TermCode]}
+      - {role: PartOfTerm,       dim: PartOfTerm,   source: [TermCode, PartOfTermCode]}
+      - {role: Program,          dim: Program,      source: [ProgramCode]}
+      - {role: Faculty,          dim: Faculty,      source: [FacultyCode]}
+      - {role: DeliveryType,     dim: DeliveryType, source: [DeliveryTypeCode]}
+      - {role: Grade,            dim: Grade,        source: [GradeCode]}
+      - {role: RegistrationDate, dim: Calendar,     source: [RegistrationDate]}
+      - {role: WithdrawalDate,   dim: Calendar,     source: [WithdrawalDate]}
+    measures:
+      - {name: CreditHoursAttempted, type: "decimal(5,2)"}
+      - {name: CreditHoursEarned,    type: "decimal(5,2)"}
+      - {name: GradePoints,          type: "decimal(6,2)"}
+      - {name: RegisteredCount,      type: int}
+      - {name: CompletedCount,       type: int}
+      - {name: WithdrawnCount,       type: int}
+    index_keys: [Student, Class]
+
+  StudentHistory:
+    description: One row per student per term - the term-level academic snapshot.
+    grain: student x term
+    large: true
+    partial_refresh_role: Term
+    source_key: [StudentCode, TermCode]
+    staging: {source_system: SIS, source_object: StudentTermSummary}
+    dimension_keys:
+      - {role: Student,          dim: Student,          source: [StudentCode]}
+      - {role: Term,             dim: Term,             source: [TermCode]}
+      - {role: Program,          dim: Program,          source: [ProgramCode]}
+      - {role: StudentStatus,    dim: StudentStatus,    source: [StudentStatusCode]}
+      - {role: AcademicStanding, dim: AcademicStanding, source: [AcademicStandingCode]}
+      - {role: TermGPA,          dim: GPA,              source: [TermGPAValue]}
+      - {role: CumulativeGPA,    dim: GPA,              source: [CumulativeGPAValue]}
+      - {role: AgeAtTermStart,   dim: Age,              source: [AgeAtTermStart]}
+    measures:
+      - {name: CreditHoursAttempted,           type: "decimal(5,2)"}
+      - {name: CreditHoursEarned,              type: "decimal(5,2)"}
+      - {name: CumulativeCreditHoursEarned,    type: "decimal(6,2)"}
+      - {name: GradePoints,                    type: "decimal(6,2)"}
+      - {name: EnrolledClassCount,             type: int}
+      - {name: FullTimeCount,                  type: int}
+      - {name: EnrolledCount,                  type: int}
+    index_keys: [Student, Term]
+
+  StudentJourney:
+    description: One row per lifecycle milestone (application started, completed, admitted, enrolled, graduated ...); applicants who never enrolled appear with an Unknown student.
+    grain: applicant x milestone
+    large: false
+    source_key: [ApplicantCode, TermCode, ApplicationStateCode, StudentStatusCode]
+    staging: {source_system: SIS, source_object: StudentMilestone}
+    dimension_keys:
+      - {role: Applicant,        dim: Applicant,        source: [ApplicantCode]}
+      - {role: Student,          dim: Student,          source: [StudentCode]}
+      - {role: MilestoneTerm,    dim: Term,             source: [TermCode]}
+      - {role: MilestoneDate,    dim: Calendar,         source: [MilestoneDate]}
+      - {role: Program,          dim: Program,          source: [ProgramCode]}
+      - {role: StudentStatus,    dim: StudentStatus,    source: [StudentStatusCode]}
+      - {role: ApplicationState, dim: ApplicationState, source: [ApplicationStateCode]}
+      - {role: AgeAtMilestone,   dim: Age,              source: [AgeAtMilestone]}
+    measures:
+      - {name: MilestoneCount,                 type: int}
+      - {name: DaysSincePreviousMilestone,     type: int}
+      - {name: TermsSinceFirstTerm,            type: int}
+    index_keys: [Applicant, MilestoneTerm]
+
+  CurrentStudent:
+    description: One row per student active as of the snapshot - the "who is here right now" fact.
+    grain: student (snapshot)
+    large: false
+    source_key: [StudentCode]
+    staging: {source_system: SIS, source_object: CurrentStudentSnapshot}
+    dimension_keys:
+      - {role: Student,          dim: Student,          source: [StudentCode]}
+      - {role: CurrentTerm,      dim: Term,             source: [CurrentTermCode]}
+      - {role: FirstTerm,        dim: Term,             source: [FirstTermCode]}
+      - {role: Program,          dim: Program,          source: [ProgramCode]}
+      - {role: StudentStatus,    dim: StudentStatus,    source: [StudentStatusCode]}
+      - {role: AcademicStanding, dim: AcademicStanding, source: [AcademicStandingCode]}
+      - {role: CumulativeGPA,    dim: GPA,              source: [CumulativeGPAValue]}
+      - {role: AgeAtSnapshot,    dim: Age,              source: [AgeAtSnapshot]}
+      - {role: SnapshotDate,     dim: Calendar,         source: [SnapshotDate]}
+    measures:
+      - {name: CumulativeCreditHoursAttempted, type: "decimal(6,2)"}
+      - {name: CumulativeCreditHoursEarned,    type: "decimal(6,2)"}
+      - {name: CurrentTermCreditHours,         type: "decimal(5,2)"}
+      - {name: TermsEnrolledCount,             type: int}
+      - {name: StudentCount,                   type: int}
+    index_keys: [Student, Program]
+
+  Registration:
+    description: One row per registration transaction (add, drop, withdraw, waitlist ...).
+    grain: student x class x transaction
+    large: true
+    partial_refresh_role: Term
+    source_key: [StudentCode, TermCode, ClassCode, RegistrationSequenceNumber]
+    source_columns:
+      - {name: RegistrationSequenceNumber, type: int}
+    staging: {source_system: SIS, source_object: RegistrationHistory}
+    dimension_keys:
+      - {role: Student,            dim: Student,            source: [StudentCode]}
+      - {role: Class,              dim: Class,              source: [TermCode, ClassCode]}
+      - {role: Course,             dim: Course,             source: [CourseCode]}
+      - {role: Term,               dim: Term,               source: [TermCode]}
+      - {role: RegistrationStatus, dim: RegistrationStatus, source: [RegistrationStatusCode]}
+      - {role: RegistrationDate,   dim: Calendar,           source: [RegistrationDate]}
+      - {role: RegistrationTime,   dim: Time,               source: [RegistrationTime]}
+    measures:
+      - {name: TransactionCount,     type: int}
+      - {name: RegistrationCount,    type: int}
+      - {name: DropCount,            type: int}
+      - {name: CreditHours,          type: "decimal(5,2)"}
+    index_keys: [Student, Class]
+
+  Award:
+    description: One row per credential conferred.
+    grain: student x program x award term
+    large: false
+    source_key: [StudentCode, ProgramCode, TermCode]
+    staging: {source_system: SIS, source_object: DegreeConferred}
+    dimension_keys:
+      - {role: Student,        dim: Student,  source: [StudentCode]}
+      - {role: Program,        dim: Program,  source: [ProgramCode]}
+      - {role: AwardTerm,      dim: Term,     source: [TermCode]}
+      - {role: AwardDate,      dim: Calendar, source: [AwardDate]}
+      - {role: AgeAtAward,     dim: Age,      source: [AgeAtAward]}
+      - {role: CumulativeGPA,  dim: GPA,      source: [CumulativeGPAValue]}
+    measures:
+      - {name: AwardCount,                 type: int}
+      - {name: CreditHoursEarnedAtAward,   type: "decimal(6,2)"}
+      - {name: TermsToCompletionCount,     type: int}
+    index_keys: [Student, Program]
+
+  Advisement:
+    description: One row per advising session.
+    grain: student x advisement x session
+    large: false
+    source_key: [StudentCode, AdvisementCode, AdvisementDate, AdvisementTime]
+    staging: {source_system: SIS, source_object: AdvisingSession, table: AdvisementSession}
+    dimension_keys:
+      - {role: Student,        dim: Student,    source: [StudentCode]}
+      - {role: AdvisementService, dim: Advisement, source: [AdvisementCode]}
+      - {role: Advisor,        dim: Faculty,    source: [AdvisorCode]}
+      - {role: Term,           dim: Term,       source: [TermCode]}
+      - {role: Program,        dim: Program,    source: [ProgramCode]}
+      - {role: AdvisementDate, dim: Calendar,   source: [AdvisementDate]}
+      - {role: AdvisementTime, dim: Time,       source: [AdvisementTime]}
+    measures:
+      - {name: SessionCount,      type: int}
+      - {name: DurationMinutes,   type: int}
+    index_keys: [Student, Advisor]
+
+  FinancialAid:
+    description: One row per student per term per aid source.
+    grain: student x term x aid source
+    large: true
+    partial_refresh_role: Term
+    source_key: [StudentCode, TermCode, FinancialAidSourceCode]
+    staging: {source_system: FinancialAid, source_object: AwardDisbursement}
+    dimension_keys:
+      - {role: Student,            dim: Student,            source: [StudentCode]}
+      - {role: Term,               dim: Term,               source: [TermCode]}
+      - {role: FinancialAidSource, dim: FinancialAidSource, source: [FinancialAidSourceCode]}
+      - {role: Program,            dim: Program,            source: [ProgramCode]}
+      - {role: OfferDate,          dim: Calendar,           source: [OfferDate]}
+      - {role: DisbursementDate,   dim: Calendar,           source: [DisbursementDate]}
+    measures:
+      - {name: OfferedAmount,    type: "decimal(12,2)"}
+      - {name: AcceptedAmount,   type: "decimal(12,2)"}
+      - {name: DisbursedAmount,  type: "decimal(12,2)"}
+      - {name: AwardCount,       type: int}
+    index_keys: [Student, Term]
+
+  Class:
+    description: One row per class section per term - capacity and enrollment at the section grain.
+    grain: class section
+    large: false
+    source_key: [TermCode, ClassCode]
+    staging: {source_system: SIS, source_object: SectionSummary, table: ClassSection}
+    dimension_keys:
+      - {role: Section,        dim: Class,        source: [TermCode, ClassCode]}
+      - {role: Course,         dim: Course,       source: [CourseCode]}
+      - {role: Term,           dim: Term,         source: [TermCode]}
+      - {role: PartOfTerm,     dim: PartOfTerm,   source: [TermCode, PartOfTermCode]}
+      - {role: Faculty,        dim: Faculty,      source: [FacultyCode]}
+      - {role: Location,       dim: Location,     source: [LocationCode]}
+      - {role: DeliveryType,   dim: DeliveryType, source: [DeliveryTypeCode]}
+      - {role: ClassStartTime, dim: Time,         source: [ClassStartTime]}
+      - {role: ClassEndTime,   dim: Time,         source: [ClassEndTime]}
+    measures:
+      - {name: SectionCount,             type: int}
+      - {name: EnrolledCount,            type: int}
+      - {name: WaitlistedCount,          type: int}
+      - {name: MaximumEnrollmentCount,   type: int}
+      - {name: CreditHours,              type: "decimal(5,2)"}
+      - {name: ContactHours,             type: "decimal(6,2)"}
+    index_keys: [Section, Faculty]
+
+  CustomCohort:
+    description: One row per student membership in an institution-defined cohort.
+    grain: student x cohort
+    large: false
+    source_key: [StudentCode, CustomCohortCode]
+    staging: {source_system: SIS, source_object: CohortMembership, table: CustomCohortMembership}
+    dimension_keys:
+      - {role: Student,       dim: Student,      source: [StudentCode]}
+      - {role: Cohort,        dim: CustomCohort, source: [CustomCohortCode]}
+      - {role: EntryTerm,     dim: Term,         source: [EntryTermCode]}
+      - {role: EntryDate,     dim: Calendar,     source: [EntryDate]}
+      - {role: Program,       dim: Program,      source: [ProgramCode]}
+    measures:
+      - {name: MembershipCount, type: int}
+    index_keys: [Student, Cohort]
+
+  # ---------------------------------------------------- multi-source facts ----
+  AdvisorContact:
+    description: One row per CRM advisor contact attempt (appointment, call, email, walk-in).
+    grain: student x contact attempt
+    large: false
+    source_key: [StudentCode, ContactDate, ContactSequenceNumber]
+    source_columns:
+      - {name: ContactSequenceNumber, type: int}
+    staging: {source_system: CRM, source_object: ContactActivity, table: AdvisorContactAttempt}
+    dimension_keys:
+      - {role: Student,     dim: Student,        source: [StudentCode]}
+      - {role: Term,        dim: Term,           source: [TermCode]}
+      - {role: Advisor,     dim: Faculty,        source: [AdvisorCode]}
+      - {role: Contact,     dim: AdvisorContact, source: [AdvisorContactCode]}
+      - {role: ContactDate, dim: Calendar,       source: [ContactDate]}
+    measures:
+      - {name: ContactCount,          type: int}
+      - {name: KeptCount,             type: int}
+      - {name: MissedCount,           type: int}
+      - {name: DaysSincePriorContact, type: int}
+    index_keys: [Student, Term]
+
+  LearningActivity:
+    description: One row per student per class per week of LMS engagement.
+    grain: student x class x week
+    large: true
+    partial_refresh_role: Term
+    source_key: [StudentCode, TermCode, ClassCode, WeekStartDate]
+    staging: {source_system: LMS, source_object: WeeklyEngagement, table: LearningActivityWeek}
+    dimension_keys:
+      - {role: Student,       dim: Student,          source: [StudentCode]}
+      - {role: Class,         dim: Class,            source: [TermCode, ClassCode]}
+      - {role: Course,        dim: Course,           source: [CourseCode]}
+      - {role: Term,          dim: Term,             source: [TermCode]}
+      - {role: WeekStartDate, dim: Calendar,         source: [WeekStartDate]}
+      - {role: Activity,      dim: LearningActivity, source: [LearningActivityCode]}
+    measures:
+      - {name: LoginCount,            type: int}
+      - {name: SubmissionCount,       type: int}
+      - {name: OnTimeSubmissionCount, type: int}
+      - {name: LateSubmissionCount,   type: int}
+      - {name: DaysSinceLastActivity, type: int}
+    index_keys: [Student, Term]
+
+  SupportCase:
+    description: One row per ITSM student support case.
+    grain: case
+    large: false
+    source_key: [SupportCaseNumber]
+    source_columns:
+      - {name: SupportCaseNumber, type: varchar(20)}
+    staging: {source_system: ITSM, source_object: CaseLog, table: SupportCaseLog}
+    dimension_keys:
+      - {role: Student,    dim: Student,     source: [StudentCode]}
+      - {role: Term,       dim: Term,        source: [TermCode]}
+      # role must not be 'Case': CASE is a T-SQL keyword and identifiers are not bracketed
+      - {role: CaseProfile, dim: SupportCase, source: [SupportCaseCode]}
+      - {role: OpenedDate, dim: Calendar,    source: [OpenedDate]}
+      - {role: ClosedDate, dim: Calendar,    source: [ClosedDate]}
+    measures:
+      - {name: CaseCount,     type: int}
+      - {name: DaysOpen,      type: int}
+      - {name: ReopenedCount, type: int}
+    index_keys: [Student, Term]

@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enrollment Intelligence</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  /* Light theme only - white background, dark text. */
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --panel: #ffffff;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --hairline: #e1e0d9;
+    --grid: #edece7;
+    --accent: #2a78d6;
+    --accent-soft: #eaf2fc;
+    --ramp-1: #86b6ef;   /* ordinal blue ramp, light -> dark (validated) */
+    --ramp-2: #5598e7;
+    --ramp-3: #2a78d6;
+    --ramp-4: #1c5cab;
+    --status-good: #0ca30c;
+    --status-warn: #fab219;
+    --status-crit: #d03b3b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .banner {
+    background: var(--accent-soft); color: var(--ink-2);
+    text-align: center; padding: 6px 16px; font-size: 13px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  header.top {
+    display: flex; align-items: baseline; gap: 24px; flex-wrap: wrap;
+    padding: 24px 32px 0;
+  }
+  header.top h1 { font-size: 20px; font-weight: 650; margin: 0; }
+  nav.tabs { display: flex; gap: 4px; padding: 12px 32px 0; border-bottom: 1px solid var(--hairline); }
+  nav.tabs button {
+    appearance: none; background: none; border: none; border-bottom: 2px solid transparent;
+    padding: 8px 14px 10px; font: inherit; font-weight: 550; color: var(--ink-2); cursor: pointer;
+  }
+  nav.tabs button:hover { color: var(--ink); }
+  nav.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  main { padding: 24px 32px 64px; max-width: 1240px; margin: 0 auto; }
+  section.tab[hidden] { display: none; }
+
+  .panel {
+    border: 1px solid var(--hairline); border-radius: 10px; background: var(--panel);
+    padding: 20px 24px; margin-bottom: 24px;
+  }
+  .panel h2 { font-size: 15px; font-weight: 650; margin: 0 0 2px; }
+  .panel .caption { color: var(--muted); font-size: 12px; margin: 0 0 16px; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .row > .panel { flex: 1 1 320px; margin-bottom: 24px; }
+  .nodata { color: var(--muted); padding: 24px 0; text-align: center; }
+  .hint { color: var(--ink-2); font-size: 13px; margin-top: 12px; }
+
+  /* stat tiles */
+  .tiles { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+  .tile {
+    flex: 1 1 150px; border: 1px solid var(--hairline); border-radius: 10px;
+    padding: 14px 18px; background: var(--panel);
+  }
+  .tile .v { font-size: 26px; font-weight: 650; }
+  .tile .l { color: var(--ink-2); font-size: 12.5px; }
+
+  /* funnel */
+  .funnel-stage { margin: 14px 0; }
+  .funnel-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .funnel-head .name { font-weight: 550; }
+  .funnel-head .nums { color: var(--ink-2); font-size: 13px; }
+  .funnel-head .nums b { color: var(--ink); font-size: 15px; font-variant-numeric: tabular-nums; }
+  .funnel-bar-track { background: var(--grid); border-radius: 4px; height: 26px; }
+  .funnel-bar { height: 26px; border-radius: 4px; min-width: 2px; }
+  .falloff { color: var(--ink-2); font-size: 12.5px; margin: 2px 0 0; }
+
+  select, .sortnote {
+    font: inherit; color: var(--ink); background: #fff;
+    border: 1px solid var(--hairline); border-radius: 6px; padding: 5px 8px;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--ink-2); font-weight: 600; white-space: nowrap; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--ink); }
+  th .arrow { color: var(--accent); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .reasons li { margin: 0 0 2px; }
+  .reasons { margin: 0; padding-left: 18px; color: var(--ink-2); }
+  .scroll-x { overflow-x: auto; }
+
+  /* pipeline */
+  .health-cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+  .hcard { flex: 1 1 260px; border: 1px solid var(--hairline); border-radius: 10px; padding: 16px 20px; }
+  .hcard .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+  .hcard .status-label { font-weight: 600; }
+  .hcard dl { margin: 10px 0 0; font-size: 13px; }
+  .hcard dt { color: var(--muted); float: left; clear: left; width: 110px; }
+  .hcard dd { margin: 0 0 3px 110px; font-variant-numeric: tabular-nums; }
+  .chartbox { position: relative; }
+</style>
+</head>
+<body>
+<div class="banner">Synthetic demonstration data.</div>
+<header class="top">
+  <h1>Enrollment Intelligence</h1>
+  <span style="color:var(--muted);font-size:13px">read-only view over the warehouse consumption layer</span>
+</header>
+<nav class="tabs" id="tabs">
+  <button data-tab="command" class="active">Enrollment Command Center</button>
+  <button data-tab="risk">Students at Risk</button>
+  <button data-tab="crossrisk">Cross-System Risk</button>
+  <button data-tab="outcomes">Program Outcomes</button>
+  <button data-tab="pipeline">Pipeline Health</button>
+</nav>
+<main>
+
+  <!-- ============ TAB 1 ============ -->
+  <section class="tab" id="tab-command">
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:12px">
+        <div>
+          <h2>Admissions funnel</h2>
+          <p class="caption">Applicants reaching each milestone, deduplicated per applicant and intended entry term &middot; Source: data.StudentJourney</p>
+        </div>
+        <label style="color:var(--ink-2);font-size:13px">Entry term
+          <select id="funnel-term"><option value="ALL">All entry terms</option></select>
+        </label>
+      </div>
+      <div id="funnel"></div>
+      <p class="hint">Counts are applicants reaching each ApplicationState funnel stage;
+        non-converting applicants are included and stop at the stage they abandoned.</p>
+    </div>
+    <div class="panel">
+      <h2>Registered students, year over year</h2>
+      <p class="caption">Students reaching the Registered milestone, for the three most recent equivalent terms of each term type &middot; Source: data.StudentJourney</p>
+      <div class="row" id="yoy"></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB 2 ============ -->
+  <section class="tab" id="tab-risk" hidden>
+    <div class="tiles" id="risk-tiles"></div>
+    <div class="panel">
+      <h2 id="risk-title">Students at risk</h2>
+      <p class="caption" id="risk-caption">Source: data.StudentHistory, data.StudentClass grain &middot; data.FinancialAid &middot; data.Advisement</p>
+      <div class="scroll-x"><div id="risk-table"></div></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB: CROSS-SYSTEM RISK ============ -->
+  <section class="tab" id="tab-crossrisk" hidden>
+    <div class="tiles" id="xr-tiles"></div>
+    <div class="panel">
+      <h2>Which signals actually predict non-return</h2>
+      <p class="caption" id="xr-signals-caption">Weights derived by dashboard/derive_weights.py from this warehouse&rsquo;s own history
+        (weight = 4 &times; ln of the odds ratio of non-return with vs without the signal) &middot; Source: data.StudentRisk</p>
+      <div class="chartbox"><canvas id="xr-signals-chart" height="330"></canvas></div>
+      <p class="hint" id="xr-zero-signals"></p>
+    </div>
+    <div class="panel">
+      <h2 id="xr-table-title">Highest-risk students</h2>
+      <p class="caption">Composite score 0&ndash;100 across SIS, LMS, CRM, financial aid, and ITSM; reasons name each student&rsquo;s top three signals
+        &middot; Source: data.StudentRisk</p>
+      <div class="scroll-x"><div id="xr-table"></div></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB 3 ============ -->
+  <section class="tab" id="tab-outcomes" hidden>
+    <div class="row">
+      <div class="panel">
+        <h2 id="awards-title">Awards granted by program</h2>
+        <p class="caption">Top 15 programs by awards granted &middot; Source: data.Award</p>
+        <div class="chartbox"><canvas id="awards-chart" height="420"></canvas></div>
+        <div class="nodata" id="awards-nodata" hidden>No data</div>
+      </div>
+      <div class="panel">
+        <h2 id="retention-title">One-year retention by program</h2>
+        <p class="caption" id="retention-caption">Fall-to-fall retention, same program order as the awards chart &middot; Source: data.StudentHistory</p>
+        <div class="chartbox"><canvas id="retention-chart" height="420"></canvas></div>
+        <div class="nodata" id="retention-nodata" hidden>No data</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>All programs</h2>
+      <p class="caption" id="outcomes-table-caption">Source: data.Award, data.StudentHistory</p>
+      <div class="scroll-x"><div id="outcomes-table"></div></div>
+    </div>
+  </section>
+
+  <!-- ============ TAB 4 ============ -->
+  <section class="tab" id="tab-pipeline" hidden>
+    <div class="health-cards" id="orch-cards"></div>
+    <div class="row">
+      <div class="panel">
+        <h2>Fact table row counts</h2>
+        <p class="caption">Current rows in each enabled fact table &middot; Source: catalog.Facts + system metadata</p>
+        <div id="fact-counts"></div>
+      </div>
+      <div class="panel">
+        <h2>Failed or incomplete runs</h2>
+        <p class="caption">Most recent 20 &middot; Source: control.ProcessLog</p>
+        <div id="problem-runs"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+"use strict";
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const RAMP = [css('--ramp-1'), css('--ramp-2'), css('--ramp-3'), css('--ramp-4')];
+const RAMP3 = [css('--ramp-1'), css('--ramp-3'), css('--ramp-4')];  // 3-step variant for YoY
+const ACCENT = css('--accent');
+const fmt = n => n == null ? '—' : Number(n).toLocaleString('en-US');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+Chart.defaults.color = css('--ink-2');
+Chart.defaults.borderColor = css('--grid');
+Chart.defaults.plugins.legend.display = false;
+
+// draws the value at the end of each bar (selective direct labels)
+const barValueLabels = {
+  id: 'barValueLabels',
+  afterDatasetsDraw(chart) {
+    const {ctx} = chart;
+    ctx.save();
+    ctx.fillStyle = css('--ink-2');
+    ctx.font = '12px system-ui, -apple-system, "Segoe UI", sans-serif';
+    chart.data.datasets.forEach((ds, di) => {
+      chart.getDatasetMeta(di).data.forEach((el, i) => {
+        const v = ds.data[i];
+        if (v == null) return;
+        const label = ds.valueFormat ? ds.valueFormat(v) : fmt(v);
+        if (chart.options.indexAxis === 'y') {
+          ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+          ctx.fillText(label, el.x + 6, el.y);
+        } else {
+          ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+          ctx.fillText(label, el.x, el.y - 4);
+        }
+      });
+    });
+    ctx.restore();
+  }
+};
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + ' -> ' + r.status);
+  return r.json();
+}
+function noData(el) { el.innerHTML = '<div class="nodata">No data</div>'; }
+
+/* ---------------- tabs ---------------- */
+const loaded = {};
+document.getElementById('tabs').addEventListener('click', e => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('section.tab').forEach(s => s.hidden = (s.id !== 'tab-' + btn.dataset.tab));
+  loadTab(btn.dataset.tab);
+});
+function loadTab(name) {
+  if (loaded[name]) return;
+  loaded[name] = true;
+  ({command: loadCommand, risk: loadRisk, crossrisk: loadCrossRisk,
+    outcomes: loadOutcomes, pipeline: loadPipeline})[name]();
+}
+
+/* ---------------- tab: cross-system risk ---------------- */
+const LEVEL_STYLE = {
+  High:     { color: css('--status-crit'), icon: '✕' },
+  Moderate: { color: css('--status-warn'), icon: '▲' },
+  Low:      { color: css('--status-good'), icon: '●' },
+};
+const sourceChips = sources =>
+  ['SIS', 'LMS', 'CRM', 'AID', 'ITSM'].filter(s => sources.includes(s)).map(s =>
+    `<span style="display:inline-block;background:var(--accent-soft);color:var(--accent);
+      border-radius:4px;padding:0 5px;font-size:11px;font-weight:600;margin-right:3px">${s}</span>`).join('');
+
+async function loadCrossRisk() {
+  const [d, w] = await Promise.all([getJSON('/api/cross-risk'), getJSON('/api/cross-risk-signals')]);
+
+  document.getElementById('xr-tiles').innerHTML = [
+    [d.levels.High, 'high risk students', css('--status-crit')],
+    [d.levels.Moderate, 'moderate risk students', css('--status-warn')],
+    [d.levels.Low, 'low risk students', css('--status-good')],
+    [d.scored_count, `students scored — ${d.current_term || 'current term'}`, null],
+  ].map(([v, l, c]) => `<div class="tile"><div class="v">${c ? `<span style="color:${c};font-size:15px">●</span> ` : ''}${fmt(v || 0)}</div><div class="l">${l}</div></div>`).join('');
+
+  // predictive-signal chart: derived weight per signal, strongest first
+  const sig = (w.signals || []).filter(s => s.weight > 0).sort((a, b) => b.weight - a.weight);
+  const zeros = (w.signals || []).filter(s => s.weight === 0);
+  document.getElementById('xr-signals-caption').innerHTML =
+    `Derived from ${fmt(w.labeled_rows)} historical student-terms (base non-return rate ` +
+    `${(100 * w.base_nonreturn_rate).toFixed(1)}%); ${w.method} &middot; Source: data.StudentRisk, dashboard/weights.json`;
+  if (!sig.length) { document.getElementById('xr-signals-chart').hidden = true; }
+  else new Chart(document.getElementById('xr-signals-chart'), {
+    type: 'bar', plugins: [barValueLabels],
+    data: {
+      labels: sig.map(s => `${s.label} (${s.source})`),
+      datasets: [{ data: sig.map(s => s.weight), backgroundColor: ACCENT, borderRadius: 4, maxBarThickness: 18 }]
+    },
+    options: {
+      indexAxis: 'y', maintainAspectRatio: false, layout: { padding: { right: 40 } },
+      scales: { y: { grid: { display: false } },
+                x: { beginAtZero: true, title: { display: true, text: 'derived weight' } } },
+      plugins: { tooltip: { callbacks: { afterLabel: items => {
+        const s = sig[items.dataIndex];
+        return [`odds ratio ${s.odds_ratio}`, `non-return with signal: ${(100 * s.nonreturn_with_flag).toFixed(1)}%`,
+                `without: ${(100 * s.nonreturn_without_flag).toFixed(1)}%`, `flagged rows: ${fmt(s.n_flag)}`];
+      } } } }
+    }
+  });
+  document.getElementById('xr-zero-signals').textContent = zeros.length
+    ? 'No predictive lift in this data (weight 0): ' + zeros.map(s => s.label).join('; ') + '.'
+    : '';
+
+  const el = document.getElementById('xr-table');
+  document.getElementById('xr-table-title').textContent =
+    `Highest-risk students — ${d.current_term || 'current term'} (top ${d.students.length} by score)`;
+  if (!d.students.length) { noData(el); return; }
+  el.innerHTML = `<table><thead><tr><th>Student ID</th><th>Program</th><th class="num">Risk score</th>
+      <th>Level</th><th>Sources</th><th>Top signals for this student</th></tr></thead><tbody>` +
+    d.students.map(s => {
+      const st = LEVEL_STYLE[s.level] || LEVEL_STYLE.Low;
+      return `<tr>
+        <td>${esc(s.student)}</td>
+        <td>${esc(s.program)}</td>
+        <td class="num"><b>${s.score}</b></td>
+        <td style="white-space:nowrap"><span style="color:${st.color};font-weight:700">${st.icon}</span> ${esc(s.level)}</td>
+        <td style="white-space:nowrap">${sourceChips(s.sources)}</td>
+        <td style="color:var(--ink-2)">${esc(s.reasons)}</td>
+      </tr>`;
+    }).join('') + '</tbody></table>';
+}
+
+/* ---------------- tab 1: command center ---------------- */
+async function loadCommand() {
+  const sel = document.getElementById('funnel-term');
+  try {
+    const t = await getJSON('/api/terms');
+    for (const row of t.terms) {
+      const o = document.createElement('option');
+      o.value = row.MilestoneTermCode;
+      o.textContent = row.MilestoneTermCode + ' — ' + row.MilestoneTermName;
+      sel.appendChild(o);
+    }
+  } catch (e) { console.error(e); }
+  sel.addEventListener('change', () => drawFunnel(sel.value));
+  drawFunnel('ALL');
+  drawYoY();
+}
+
+async function drawFunnel(term) {
+  const el = document.getElementById('funnel');
+  const d = await getJSON('/api/funnel?term=' + encodeURIComponent(term));
+  const max = Math.max(...d.stages.map(s => s.count));
+  if (!max) { noData(el); return; }
+  el.innerHTML = d.stages.map((s, i) => `
+    <div class="funnel-stage">
+      <div class="funnel-head">
+        <span class="name">${esc(s.label)}</span>
+        <span class="nums"><b>${fmt(s.count)}</b> applicants</span>
+      </div>
+      <div class="funnel-bar-track">
+        <div class="funnel-bar" style="width:${(100 * s.count / max).toFixed(1)}%;background:${RAMP[i] || RAMP[3]}"></div>
+      </div>
+      ${s.falloff_pct == null ? '' :
+        `<p class="falloff">${s.falloff_pct === 0
+            ? 'no fall-off from previous stage'
+            : s.falloff_pct > 0
+              ? '&minus;' + s.falloff_pct + '% fall-off from previous stage'
+              : '+' + (-s.falloff_pct) + '% vs previous stage'}</p>`}
+    </div>`).join('');
+}
+
+async function drawYoY() {
+  const wrap = document.getElementById('yoy');
+  const d = await getJSON('/api/yoy');
+  const order = ['FA', 'SP', 'SU'];
+  const groups = order.filter(k => d.groups[k]).concat(Object.keys(d.groups).filter(k => !order.includes(k)));
+  if (!groups.length) { noData(wrap); return; }
+  wrap.innerHTML = '';
+  for (const key of groups) {
+    const g = d.groups[key];
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    const terms = g.terms;   // already oldest -> newest
+    const latest = terms[terms.length - 1], prior = terms[terms.length - 2];
+    let delta = '';
+    if (prior && prior.registered > 0) {
+      const pct = 100 * (latest.registered - prior.registered) / prior.registered;
+      delta = `<p class="hint">${esc(latest.term)}: ${pct >= 0 ? '+' : '&minus;'}${Math.abs(pct).toFixed(1)}% registered vs ${esc(prior.term)}</p>`;
+    }
+    panel.innerHTML = `<h2>${esc(g.type_name)} terms</h2>
+      <p class="caption">Registered students per ${esc(g.type_name.toLowerCase())} entry term</p>
+      <div class="chartbox"><canvas height="220"></canvas></div>${delta}`;
+    wrap.appendChild(panel);
+    new Chart(panel.querySelector('canvas'), {
+      type: 'bar',
+      plugins: [barValueLabels],
+      data: {
+        labels: terms.map(t => t.term),
+        datasets: [{ data: terms.map(t => t.registered),
+                     backgroundColor: terms.map((_, i) => RAMP3[i + (3 - terms.length)]),
+                     borderRadius: 4, maxBarThickness: 56 }]
+      },
+      options: {
+        maintainAspectRatio: false, layout: { padding: { top: 18 } },
+        scales: {
+          x: { grid: { display: false } },
+          y: { beginAtZero: true, title: { display: true, text: 'registered students' } }
+        }
+      }
+    });
+  }
+}
+
+/* ---------------- tab 2: students at risk ---------------- */
+const RISK_COLS = [
+  ['student',    'Student ID',      false],
+  ['program',    'Program',         false],
+  ['graded_term','Graded term',     false],
+  ['term_gpa',   'Term GPA',        true],
+  ['attempted',  'Credits attempted', true],
+  ['earned',     'Credits earned',  true],
+  ['standing',   'Academic standing', false],
+  ['reasons',    'Why flagged',     false],
+];
+let riskData = null, riskSort = { key: 'flag_count', dir: -1 };
+
+async function loadRisk() {
+  const d = await getJSON('/api/at-risk');
+  riskData = d;
+  document.getElementById('risk-title').textContent =
+    `${fmt(d.flagged_count)} of ${fmt(d.enrolled_count)} enrolled students flagged — ${d.current_term || 'current term'}`;
+  document.getElementById('risk-caption').innerHTML =
+    'Aid and advising flags use the current term (' + esc(d.current_term || '—') + '); GPA and completion flags use each student&rsquo;s most recent graded term, shown per row (no grades are posted yet for the term in progress). ' +
+    'Click a column header to sort. &middot; Source: data.StudentHistory (data.StudentClass grain), data.FinancialAid, data.Advisement';
+  const t = d.flag_totals || {};
+  document.getElementById('risk-tiles').innerHTML = [
+    [d.flagged_count, 'students flagged'],
+    [t.low_gpa, 'term GPA below 2.0'],
+    [t.low_completion, 'completion ratio below 50%'],
+    [t.completion_drop, 'completion ratio dropped >30 pts'],
+    [t.aid_unaccepted, 'aid offered, not accepted'],
+    [t.no_advising, 'no advising contact this term'],
+  ].map(([v, l]) => `<div class="tile"><div class="v">${fmt(v || 0)}</div><div class="l">${l}</div></div>`).join('');
+  renderRiskTable();
+}
+
+function renderRiskTable() {
+  const el = document.getElementById('risk-table');
+  const rows = (riskData.students || []).slice();
+  if (!rows.length) { noData(el); return; }
+  const { key, dir } = riskSort;
+  rows.sort((a, b) => {
+    let x = a[key], y = b[key];
+    if (key === 'reasons') { x = a.flag_count; y = b.flag_count; }
+    if (x == null) return 1; if (y == null) return -1;
+    return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * dir;
+  });
+  el.innerHTML = `<table><thead><tr>${RISK_COLS.map(([k, label, num]) =>
+      `<th class="sortable ${num ? 'num' : ''}" data-key="${k}">${label}` +
+      (key === k || (key === 'flag_count' && k === 'reasons') ? ` <span class="arrow">${dir === 1 ? '▲' : '▼'}</span>` : '') +
+      `</th>`).join('')}</tr></thead><tbody>` +
+    rows.map(s => `<tr>
+      <td>${esc(s.student)}</td>
+      <td>${esc(s.program)}</td>
+      <td>${esc(s.graded_term || '—')}</td>
+      <td class="num">${s.term_gpa == null ? '—' : s.term_gpa.toFixed(2)}</td>
+      <td class="num">${s.attempted == null ? '—' : s.attempted.toFixed(0)}</td>
+      <td class="num">${s.earned == null ? '—' : s.earned.toFixed(0)}</td>
+      <td>${esc(s.standing || '—')}</td>
+      <td><ul class="reasons">${s.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul></td>
+    </tr>`).join('') + '</tbody></table>';
+  el.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.key === 'reasons' ? 'flag_count' : th.dataset.key;
+    riskSort = { key: k, dir: riskSort.key === k ? -riskSort.dir : (k === 'flag_count' ? -1 : 1) };
+    renderRiskTable();
+  }));
+}
+
+/* ---------------- tab 3: program outcomes ---------------- */
+async function loadOutcomes() {
+  const d = await getJSON('/api/outcomes');
+  const ay = d.academic_year;
+  document.getElementById('awards-title').textContent =
+    `Awards granted by program — academic year ${ay ?? '—'}`;
+  document.getElementById('retention-title').textContent =
+    `One-year retention by program — ${d.cohort_fall || 'fall'} cohort`;
+  document.getElementById('retention-caption').innerHTML =
+    `Share of ${esc(d.cohort_fall || 'fall')} enrolled students enrolled again in ${esc(d.next_fall || 'the next fall')}, ` +
+    'same program order as the awards chart &middot; Source: data.StudentHistory';
+  document.getElementById('outcomes-table-caption').innerHTML =
+    `Awards for academic year ${ay ?? '—'}; retention ${esc(d.cohort_fall || '—')} &rarr; ${esc(d.next_fall || '—')} &middot; Source: data.Award, data.StudentHistory`;
+
+  const progs = d.programs || [];
+  const top = progs.slice(0, 15);
+  const labels = top.map(p => p.program.split(' ')[0]);   // program code; full name in tooltip
+  const fullNames = top.map(p => p.program);
+
+  if (!top.length) {
+    document.getElementById('awards-nodata').hidden = false;
+    document.getElementById('retention-nodata').hidden = false;
+    document.getElementById('awards-chart').hidden = true;
+    document.getElementById('retention-chart').hidden = true;
+  } else {
+    const common = {
+      indexAxis: 'y', maintainAspectRatio: false,
+      layout: { padding: { right: 48 } },
+      scales: {
+        y: { grid: { display: false } },
+        x: { beginAtZero: true }
+      },
+      plugins: { tooltip: { callbacks: { title: items => fullNames[items[0].dataIndex] } } }
+    };
+    new Chart(document.getElementById('awards-chart'), {
+      type: 'bar', plugins: [barValueLabels],
+      data: { labels, datasets: [{ data: top.map(p => p.awards),
+              backgroundColor: ACCENT, borderRadius: 4, maxBarThickness: 18 }] },
+      options: { ...common, scales: { ...common.scales,
+        x: { beginAtZero: true, title: { display: true, text: 'awards granted' } } } }
+    });
+    new Chart(document.getElementById('retention-chart'), {
+      type: 'bar', plugins: [barValueLabels],
+      data: { labels, datasets: [{ data: top.map(p => p.retention_pct),
+              valueFormat: v => v.toFixed(1) + '%',
+              backgroundColor: ACCENT, borderRadius: 4, maxBarThickness: 18 }] },
+      options: { ...common, scales: { ...common.scales,
+        x: { beginAtZero: true, max: 100, title: { display: true, text: 'retained after one year (%)' } } } }
+    });
+  }
+
+  const tbl = document.getElementById('outcomes-table');
+  if (!progs.length) { noData(tbl); return; }
+  tbl.innerHTML = `<table><thead><tr>
+      <th>Program</th><th class="num">Awards granted</th>
+      <th class="num">Fall cohort</th><th class="num">Retained next fall</th>
+      <th class="num">Retention</th></tr></thead><tbody>` +
+    progs.map(p => `<tr>
+      <td>${esc(p.program)}</td>
+      <td class="num">${fmt(p.awards)}</td>
+      <td class="num">${fmt(p.cohort)}</td>
+      <td class="num">${fmt(p.retained)}</td>
+      <td class="num">${p.retention_pct == null ? '—' : p.retention_pct.toFixed(1) + '%'}</td>
+    </tr>`).join('') + '</tbody></table>';
+}
+
+/* ---------------- tab 4: pipeline health ---------------- */
+const HEALTH = {
+  green: { color: css('--status-good'), icon: '●', label: 'Healthy' },
+  amber: { color: css('--status-warn'), icon: '▲', label: 'Stale' },
+  red:   { color: css('--status-crit'), icon: '✕', label: 'Failed' },
+};
+async function loadPipeline() {
+  const d = await getJSON('/api/pipeline');
+  const cards = document.getElementById('orch-cards');
+  if (!(d.orchestrators || []).length) { noData(cards); }
+  else cards.innerHTML = d.orchestrators.map(o => {
+    const h = HEALTH[o.health] || HEALTH.red;
+    const run = o.last_run, succ = o.last_success;
+    const desc = o.health === 'green' ? 'last run succeeded within 24 hours'
+               : o.health === 'amber' ? 'last successful run is older than 24 hours'
+               : 'last run failed or never completed';
+    return `<div class="hcard">
+      <div><span style="color:${h.color};font-weight:700">${h.icon}</span>
+        <span class="status-label">${h.label}</span>
+        <span style="color:var(--muted)"> — ${esc(o.name)}</span></div>
+      <div class="hint">${desc}</div>
+      <dl>
+        <dt>Last run</dt><dd>${run ? esc(run.StartDateTime) + ' (' + esc(run.StatusCode) + ')' : 'never'}</dd>
+        <dt>Last success</dt><dd>${succ ? esc(succ.EndDateTime) + ' — ' + succ.AgeHours.toFixed(1) + ' h ago' : 'never'}</dd>
+        <dt>Duration</dt><dd>${run && run.DurationMs != null ? fmt(run.DurationMs) + ' ms' : '—'}</dd>
+      </dl>
+    </div>`;
+  }).join('');
+
+  const fc = document.getElementById('fact-counts');
+  if (!(d.fact_counts || []).length) noData(fc);
+  else fc.innerHTML = `<table><thead><tr><th>Fact</th><th>Table</th><th class="num">Rows</th></tr></thead><tbody>` +
+    d.fact_counts.map(f => `<tr><td>${esc(f.FactName)}</td><td>${esc(f.TableName)}</td>
+      <td class="num">${fmt(f.TableRowCount)}</td></tr>`).join('') + '</tbody></table>';
+
+  const pr = document.getElementById('problem-runs');
+  if (!(d.problem_runs || []).length)
+    pr.innerHTML = '<div class="nodata">No failed or incomplete runs</div>';
+  else pr.innerHTML = `<table><thead><tr><th>Process</th><th>Status</th><th>Started</th><th>Error</th></tr></thead><tbody>` +
+    d.problem_runs.map(r => `<tr>
+      <td>${esc(r.ProcessName)}${r.ObjectName ? ' · ' + esc(r.ObjectName) : ''}</td>
+      <td><span class="dot" style="background:${css('--status-crit')};display:inline-block;width:8px;height:8px;border-radius:50%"></span> ${esc(r.StatusCode)}</td>
+      <td>${esc(r.StartDateTime)}</td>
+      <td>${esc(r.ErrorMessage || '—')}</td>
+    </tr>`).join('') + '</tbody></table>';
+}
+
+loadTab('command');
+</script>
+</body>
+</html>

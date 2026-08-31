@@ -1,0 +1,121 @@
+{
+ "derived_at": "2026-08-30",
+ "labeled_rows": 13603,
+ "base_nonreturn_rate": 0.0912,
+ "total_weight": 67,
+ "high_threshold": 50,
+ "moderate_threshold": 40,
+ "method": "weight = round(4 * ln(odds ratio of non-return with vs without the flag)), floored at 0",
+ "signals": [
+  {
+   "flag": "FlagLowGPA",
+   "label": "Term GPA below 2.0",
+   "source": "SIS",
+   "n_flag": 2036,
+   "nonreturn_with_flag": 0.0938,
+   "nonreturn_without_flag": 0.0907,
+   "odds_ratio": 1.04,
+   "weight": 0
+  },
+  {
+   "flag": "FlagLowCompletion",
+   "label": "Completion ratio below 50%",
+   "source": "SIS",
+   "n_flag": 1147,
+   "nonreturn_with_flag": 0.0942,
+   "nonreturn_without_flag": 0.0909,
+   "odds_ratio": 1.04,
+   "weight": 0
+  },
+  {
+   "flag": "FlagCompletionDrop",
+   "label": "Completion ratio dropped >30 points",
+   "source": "SIS",
+   "n_flag": 1342,
+   "nonreturn_with_flag": 0.111,
+   "nonreturn_without_flag": 0.089,
+   "odds_ratio": 1.28,
+   "weight": 1
+  },
+  {
+   "flag": "FlagInactiveLMS",
+   "label": "No LMS activity for 14+ days",
+   "source": "LMS",
+   "n_flag": 1326,
+   "nonreturn_with_flag": 0.6697,
+   "nonreturn_without_flag": 0.0287,
+   "odds_ratio": 68.68,
+   "weight": 17
+  },
+  {
+   "flag": "FlagDecliningLMS",
+   "label": "LMS activity fell below half of early-term level",
+   "source": "LMS",
+   "n_flag": 1732,
+   "nonreturn_with_flag": 0.4925,
+   "nonreturn_without_flag": 0.0326,
+   "odds_ratio": 28.8,
+   "weight": 13
+  },
+  {
+   "flag": "FlagLateSubmissions",
+   "label": "Under 60% of submissions on time",
+   "source": "LMS",
+   "n_flag": 37,
+   "nonreturn_with_flag": 0.4595,
+   "nonreturn_without_flag": 0.0902,
+   "odds_ratio": 8.58,
+   "weight": 9
+  },
+  {
+   "flag": "FlagNoAdvisorContact",
+   "label": "No advisor contact this term",
+   "source": "CRM",
+   "n_flag": 5009,
+   "nonreturn_with_flag": 0.1238,
+   "nonreturn_without_flag": 0.0721,
+   "odds_ratio": 1.82,
+   "weight": 2
+  },
+  {
+   "flag": "FlagAdvisorMissed",
+   "label": "Advisor contact attempted, none kept",
+   "source": "CRM",
+   "n_flag": 790,
+   "nonreturn_with_flag": 0.2835,
+   "nonreturn_without_flag": 0.0793,
+   "odds_ratio": 4.6,
+   "weight": 6
+  },
+  {
+   "flag": "FlagAidUnaccepted",
+   "label": "Aid offered but not accepted",
+   "source": "FinancialAid",
+   "n_flag": 0,
+   "nonreturn_with_flag": 0.0,
+   "nonreturn_without_flag": 0.0912,
+   "odds_ratio": null,
+   "weight": 0
+  },
+  {
+   "flag": "FlagOpenFinancialCase",
+   "label": "Unresolved financial support case",
+   "source": "ITSM",
+   "n_flag": 806,
+   "nonreturn_with_flag": 0.8511,
+   "nonreturn_without_flag": 0.0433,
+   "odds_ratio": 126.33,
+   "weight": 19
+  },
+  {
+   "flag": "FlagOpenOtherCase",
+   "label": "Other support case open",
+   "source": "ITSM",
+   "n_flag": 54,
+   "nonreturn_with_flag": 0.0185,
+   "nonreturn_without_flag": 0.0914,
+   "odds_ratio": 0.19,
+   "weight": 0
+  }
+ ]
+}
